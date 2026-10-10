@@ -1,0 +1,45 @@
+name: Local MCP DMG
+
+on:
+  push:
+    branches: [build/local-mcp-dmg]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin --bin spotifast
+          cargo build --locked --release --target x86_64-apple-darwin --bin spotifast
+      - name: Create universal app and DMG
+        shell: bash
+        run: |
+          mkdir -p dist/payload
+          lipo -create \
+            target/aarch64-apple-darwin/release/spotifast \
+            target/x86_64-apple-darwin/release/spotifast \
+            -output dist/spotifast
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["package"]["version"])')
+          bash packaging/macos/bundle.sh dist/spotifast dist/payload/Spotifast.app "$version"
+          dist/payload/Spotifast.app/Contents/MacOS/Spotifast --version
+          cp README.md LICENSE dist/payload/
+          ruby packaging/macos/dmg.rb dist/payload "dist/spotifast-$version-mcp-macos-universal.dmg"
+          shasum -a 256 dist/*.dmg > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: spotifast-mcp-macos-universal
+          path: |
+            dist/*.dmg
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
